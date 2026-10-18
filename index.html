@@ -191,6 +191,9 @@
   .opt .unit { font-size: 13px; color: var(--muted); margin-left: -6px; }
   .opt input[type=range] { flex: 1; min-width: 120px; width: auto; }
   .opt .qv { font-size: 13px; font-variant-numeric: tabular-nums; width: 28px; text-align: right; }
+  .share-row[hidden], .share-row .pill[hidden] { display: none; }
+  .share-row .pill { white-space: nowrap; }
+  .share-row .pill svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .meta { font-size: 12px; color: var(--faint); text-align: center; margin-top: -6px; font-variant-numeric: tabular-nums; }
   .compare .crop { position: absolute; display: none; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,.5);
     outline: 1.5px solid rgba(255,255,255,.9); }
@@ -327,7 +330,8 @@
   <ol>
     <li>Gemini는 로고를 반투명하게 합성합니다(결과 = α·로고색 + (1−α)·원본). 로고의 알파맵을 알고 있으므로 이 식을 거꾸로 풀어 원래 픽셀을 복원합니다.</li>
     <li>자국이 살짝 남으면 결과 카드의 <b>세부 조정</b>에서 강도와 로고 밝기를 바꿔 보세요. 엉뚱한 곳을 잡았다면 <b>위치 직접 지정</b>을 누른 뒤 이미지에서 마크를 클릭하세요.</li>
-    <li>저장 설정에서 형식(PNG·JPG·WEBP), 가로 크기, 비율을 고르면 모든 다운로드에 적용됩니다. 비율을 고르면 가운데를 기준으로 잘리고, 미리보기에 잘릴 영역이 어둡게 표시돼요. 원본보다 크게 늘리지는 않습니다.</li>
+    <li>휴대폰에서는 <b>공유·저장</b>을 누르면 공유 시트가 열려 사진 앱에 바로 저장할 수 있어요. <b>복사</b>는 결과를 PNG로 클립보드에 넣어 메신저나 문서에 붙여넣을 수 있게 합니다.</li>
+    <li>저장 설정에서 형식(PNG·JPG·WEBP), 가로 크기, 비율을 고르면 모든 다운로드에 적용됩니다. 비율을 고르면 미리보기에 잘릴 영역이 어둡게 표시되고, 밝은 상자를 끌어 남길 위치를 옮길 수 있어요. 원본보다 크게 늘리지는 않습니다.</li>
     <li>눈에 보이는 마크만 지웁니다. 이미지 안에 숨겨진 SynthID 디지털 워터마크는 그대로 남습니다. 본인이 만든 이미지를 깔끔하게 쓰는 용도로 사용해 주세요.</li>
   </ol>
   <div class="fine">알파맵 데이터: <a href="https://github.com/GargantuaX/gemini-watermark-remover" target="_blank" rel="noopener">GargantuaX/gemini-watermark-remover</a> (MIT License, © 2025 Jad)</div>
@@ -608,30 +612,36 @@ const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 const opts = { fmt: 'png', q: 90, size: 'orig', w: 1280, ratio: 'orig' };
 try { Object.assign(opts, JSON.parse(localStorage.getItem('saveOpts') || '{}')); } catch {}
 
-function cropRect(W, H) {
+// Crop box for the chosen ratio. `pos` is the box centre as a fraction of
+// the image (default: middle); the box is kept inside the image.
+function cropRect(W, H, pos = { fx: 0.5, fy: 0.5 }) {
   const r = RATIOS[opts.ratio];
   if (!r) return { x: 0, y: 0, w: W, h: H };
-  if (W / H > r) { const w = Math.round(H * r); return { x: Math.round((W - w) / 2), y: 0, w, h: H }; }
-  const h = Math.round(W / r); return { x: 0, y: Math.round((H - h) / 2), w: W, h };
+  const w = W / H > r ? Math.round(H * r) : W, h = W / H > r ? H : Math.round(W / r);
+  const x = Math.min(Math.max(Math.round(pos.fx * W - w / 2), 0), W - w);
+  const y = Math.min(Math.max(Math.round(pos.fy * H - h / 2), 0), H - h);
+  return { x, y, w, h };
 }
 // Final size: crop first, then shrink to the chosen width (never enlarge).
-function outputSize(W, H) {
-  const c = cropRect(W, H);
+function outputSize(it) {
+  const c = cropRect(it.W, it.H, it.cropPos);
   const tw = opts.size === 'orig' ? 0 : opts.size === 'custom' ? Math.round(opts.w) : +opts.size;
   if (tw > 0 && tw < c.w) return { c, w: tw, h: Math.max(1, Math.round(c.h * tw / c.w)) };
   return { c, w: c.w, h: c.h };
 }
 function refreshOutput(it) {
-  const { c, w, h } = outputSize(it.W, it.H);
-  $('.meta', it.card).textContent = `${FORMATS[opts.fmt][1]} · ${w}×${h}`;
-  const box = $('.crop', it.card), cropped = c.w !== it.W || c.h !== it.H;
+  const { c, w, h } = outputSize(it);
+  const cropped = c.w !== it.W || c.h !== it.H;
+  $('.meta', it.card).textContent = `${FORMATS[opts.fmt][1]} · ${w}×${h}` + (cropped ? ' · 상자를 끌어 위치 조정' : '');
+  const box = $('.crop', it.card);
   box.style.display = cropped ? 'block' : 'none';
   if (cropped) Object.assign(box.style, { left: c.x / it.W * 100 + '%', top: c.y / it.H * 100 + '%',
     width: c.w / it.W * 100 + '%', height: c.h / it.H * 100 + '%' });
+  invalidateShare(it);
 }
 
-async function exportBlob(it) {
-  const { c, w, h } = outputSize(it.W, it.H);
+async function exportBlob(it, fmt = opts.fmt) {
+  const { c, w, h } = outputSize(it);
   const src = document.createElement('canvas'); src.width = it.W; src.height = it.H;
   src.getContext('2d').putImageData(it.out, 0, 0);
   let cur = document.createElement('canvas'); cur.width = c.w; cur.height = c.h;
@@ -643,10 +653,10 @@ async function exportBlob(it) {
   }
   const out = document.createElement('canvas'); out.width = w; out.height = h;
   const ctx = out.getContext('2d');
-  if (opts.fmt === 'jpg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+  if (fmt === 'jpg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
   ctx.imageSmoothingQuality = 'high'; ctx.drawImage(cur, 0, 0, w, h);
-  const mime = FORMATS[opts.fmt][0];
-  const blob = await new Promise(r => out.toBlob(r, mime, opts.fmt === 'png' ? undefined : opts.q / 100));
+  const mime = FORMATS[fmt][0];
+  const blob = await new Promise(r => out.toBlob(r, mime, fmt === 'png' ? undefined : opts.q / 100));
   const ext = EXT[blob.type] || 'png';
   return { blob, name: it.file.name.replace(/\.[^.]+$/, '') + '_clean.' + ext, fallback: blob.type !== mime };
 }
@@ -668,6 +678,42 @@ async function download(it) {
   const { blob, name, fallback } = await exportBlob(it);
   saveBlob(blob, name);
   if (fallback) toast(FALLBACK_MSG);
+}
+
+// ---------- share & copy ----------
+const CAN_SHARE = (() => {
+  try { return !!navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'], { type: 'image/png' })], 'x.png', { type: 'image/png' })] }); }
+  catch { return false; }
+})();
+const CAN_COPY = !!(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write);
+
+// navigator.share() must run right after the tap, so the file is prepared
+// ahead of time whenever the result or the save settings change.
+function invalidateShare(it) {
+  if (!CAN_SHARE) return;
+  it.shareFile = null;
+  const ticket = it.shareTicket = {};
+  clearTimeout(it.shareTimer);
+  it.shareTimer = setTimeout(async () => {
+    const { blob, name } = await exportBlob(it);
+    if (it.shareTicket === ticket) it.shareFile = new File([blob], name, { type: blob.type });
+  }, 400);
+}
+async function share(it) {
+  let file = it.shareFile;
+  if (!file) { const { blob, name } = await exportBlob(it); file = it.shareFile = new File([blob], name, { type: blob.type }); }
+  try { await navigator.share({ files: [file] }); }
+  catch (e) {
+    if (e.name === 'AbortError') return;
+    toast(e.name === 'NotAllowedError' ? '준비됐어요. 공유를 한 번 더 눌러 주세요' : '공유하지 못했어요. 다운로드를 이용해 주세요');
+  }
+}
+// Clipboards accept PNG everywhere, so copies are always PNG (crop and size still apply).
+async function copyImage(it) {
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': exportBlob(it, 'png').then(r => r.blob) })]);
+    toast('클립보드에 복사했어요');
+  } catch { toast('복사하지 못했어요. 다운로드를 이용해 주세요'); }
 }
 
 // ---------- zip (stored, no compression: images are already compressed) ----------
@@ -779,6 +825,10 @@ async function addOne(file) {
         </div>
         <button class="pill dl">다운로드</button>
         <div class="meta"></div>
+        <div class="row share-row">
+          <button class="pill soft sm copy"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="9" height="10" rx="2"/><path d="M4.5 13V5.5a2 2 0 0 1 2-2H12"/></svg>복사</button>
+          <button class="pill soft sm share" title="공유 시트에서 사진 앱에 저장하거나 다른 앱으로 보낼 수 있어요"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 12.5V3M6.5 6.5 10 3l3.5 3.5"/><path d="M6 9H5a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 5 17h10a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 15 9h-1"/></svg>공유·저장</button>
+        </div>
         <button class="pill soft pick">위치 직접 지정</button>
         <details class="tune">
           <summary>세부 조정</summary>
@@ -801,7 +851,7 @@ async function addOne(file) {
   const actx = ca.getContext('2d');
   await new Promise(r => setTimeout(r, 16));
 
-  const it = { file, W, H, orig, card, ca, gain: 1, L: 255 };
+  const it = { file, W, H, orig, card, ca, gain: 1, L: 255, cropPos: { fx: 0.5, fy: 0.5 } };
   items.push(it); syncToolbar();
   const status = $('.status', card), gainEl = $('.gain', card), gv = $('.gv', card), logoEl = $('.logo', card), lv = $('.lv', card), pickBtn = $('.pick', card);
 
@@ -840,6 +890,11 @@ async function addOne(file) {
   $('.reset', card).addEventListener('click', () => { it.gain = it.auto.gain; it.L = it.auto.L; render(); });
   $('.remove', card).addEventListener('click', () => { items.splice(items.indexOf(it), 1); card.remove(); syncToolbar(); });
   $('.dl', card).addEventListener('click', () => download(it));
+  const copyBtn = $('.copy', card), shareBtn = $('.share', card);
+  copyBtn.hidden = !CAN_COPY; shareBtn.hidden = !CAN_SHARE;
+  $('.share-row', card).hidden = !CAN_COPY && !CAN_SHARE;
+  copyBtn.addEventListener('click', () => copyImage(it));
+  shareBtn.addEventListener('click', () => share(it));
   pickBtn.addEventListener('click', () => {
     it.picking = !it.picking;
     pickBtn.classList.toggle('soft', !it.picking);
@@ -867,20 +922,42 @@ function drawZoom(it, canvas, imgData) {
   canvas.getContext('2d').putImageData(crop, 0, 0);
 }
 
+// Dragging the image moves the comparison divider. When a crop ratio is on,
+// dragging inside the crop box moves the box instead (the divider knob still
+// slides).
 function setupCompare(box, it, onPick) {
-  const after = $('.after', box), handle = $('.handle', box);
+  const after = $('.after', box), handle = $('.handle', box), crop = $('.crop', box);
+  let split = 50, mode = null, start = null;
   const set = clientX => {
     const r = box.getBoundingClientRect();
-    const p = Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * 100;
-    after.style.clipPath = `inset(0 0 0 ${p}%)`; handle.style.left = p + '%';
+    split = Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * 100;
+    after.style.clipPath = `inset(0 0 0 ${split}%)`; handle.style.left = split + '%';
   };
-  let dragging = false;
+  const overCrop = e => {
+    if (crop.style.display !== 'block') return false;
+    const r = box.getBoundingClientRect(), c = crop.getBoundingClientRect();
+    if (Math.abs(e.clientX - (r.left + r.width * split / 100)) < 24) return false;
+    return e.clientX >= c.left && e.clientX <= c.right && e.clientY >= c.top && e.clientY <= c.bottom;
+  };
   box.addEventListener('pointerdown', e => {
     if (it.picking) { const r = $('canvas.before', box).getBoundingClientRect(); onPick((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); return; }
-    dragging = true; box.setPointerCapture(e.pointerId); set(e.clientX); });
-  box.addEventListener('pointermove', e => { if (dragging) set(e.clientX); });
-  box.addEventListener('pointerup', () => dragging = false);
-  box.addEventListener('pointercancel', () => dragging = false);
+    box.setPointerCapture(e.pointerId);
+    if (overCrop(e)) { mode = 'crop'; start = { x: e.clientX, y: e.clientY, ...(it.cropPos) }; return; }
+    mode = 'split'; set(e.clientX);
+  });
+  box.addEventListener('pointermove', e => {
+    if (mode === 'split') return set(e.clientX);
+    if (mode === 'crop') {
+      const r = box.getBoundingClientRect();
+      const c = cropRect(it.W, it.H, { fx: start.fx + (e.clientX - start.x) / r.width, fy: start.fy + (e.clientY - start.y) / r.height });
+      it.cropPos = { fx: (c.x + c.w / 2) / it.W, fy: (c.y + c.h / 2) / it.H };
+      return refreshOutput(it);
+    }
+    if (!it.picking) box.style.cursor = overCrop(e) ? 'move' : '';
+  });
+  const end = () => { mode = null; };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
 }
 
 </script>
