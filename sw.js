@@ -1,7 +1,7 @@
 // Offline support: keep the app's files cached and serve them first, while
 // refreshing the cache in the background so the next visit gets updates.
 // Bump VERSION when releasing so old caches are dropped.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'watermark-remover-' + VERSION;
 const FILES = [
   './', './index.html', './engine.js', './worker.js', './manifest.webmanifest',
@@ -9,7 +9,8 @@ const FILES = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // `reload` skips the HTTP cache so a release never precaches stale files
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

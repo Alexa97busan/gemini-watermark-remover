@@ -143,6 +143,7 @@
     background: repeating-conic-gradient(var(--checker) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border-radius: 18px; overflow: hidden; }
   .compare canvas { width: 100%; height: auto; display: block; }
   .compare.picking { cursor: crosshair; box-shadow: 0 0 0 3px var(--blue); }
+  .compare:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 55%, transparent); outline-offset: 3px; }
   .compare .after { position: absolute; inset: 0; clip-path: inset(0 0 0 50%); }
   .compare .handle { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: #fff;
     box-shadow: 0 0 6px rgba(0,0,0,.35); pointer-events: none; }
@@ -210,6 +211,20 @@
     background: rgba(29,29,31,.92); color: #fff; font-size: 14px; padding: 12px 18px; border-radius: 980px; transition: .3s;
     max-width: calc(100% - 32px); text-align: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* page-wide drop veil */
+  .veil { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; pointer-events: none;
+    background: color-mix(in srgb, var(--page) 70%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  body.dragging .veil { display: grid; }
+  .veil > div { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 40px 56px; border-radius: 30px;
+    border: 2px dashed var(--blue); background: var(--surface); box-shadow: var(--shadow); font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+  .veil svg { width: 44px; height: 44px; fill: none; stroke: var(--blue); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* new-version bar */
+  .update { position: fixed; left: 50%; top: 60px; transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 14px;
+    background: var(--surface); box-shadow: var(--shadow); border-radius: 980px; padding: 8px 8px 8px 20px; font-size: 14px;
+    max-width: calc(100% - 32px); }
+  .update[hidden] { display: none; }
 
   /* magnifier */
   .compare .loupe { position: absolute; display: none; width: 168px; height: 168px; border-radius: 50%; pointer-events: none;
@@ -366,6 +381,8 @@
   <div class="fine" data-i18n-html="fn.fine">알파맵 데이터: <a href="https://github.com/GargantuaX/gemini-watermark-remover" target="_blank" rel="noopener">GargantuaX/gemini-watermark-remover</a> (MIT License, © 2025 Jad)</div>
 </footer>
 <div class="toast" id="toast" role="status"></div>
+<div class="veil" aria-hidden="true"><div><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 27V9M13 16l7-7 7 7"/><path d="M9 25v4a3 3 0 0 0 3 3h16a3 3 0 0 0 3-3v-4"/></svg><span data-i18n="drop.veil">여기에 놓으세요</span></div></div>
+<div class="update" id="update" role="status" hidden><span data-i18n="upd.msg">새 버전이 준비됐어요.</span><button class="pill sm" id="reload" data-i18n="upd.btn">새로고침</button></div>
 
 <script src="engine.js"></script>
 <script>
@@ -392,7 +409,9 @@ const I18N = {
     'drop.title': '이미지를 여기에 놓으세요.',
     'drop.sub': 'PNG · JPG · WEBP, 여러 장도 한 번에',
     'drop.btn': '이미지 선택',
-    'drop.kbd': '또는 ⌘V로 붙여넣기',
+    'drop.kbd': '또는 {key}로 붙여넣기', 'drop.veil': '여기에 놓으세요',
+    'upd.msg': '새 버전이 준비됐어요.', 'upd.btn': '새로고침',
+    't.unreadable': '열 수 없는 파일 {n}개는 건너뛰었어요 (PNG·JPG·WEBP를 넣어 주세요)',
     'res.title': '결과',
     'res.clear': '모두 지우기',
     'res.zip': 'ZIP으로 모두 받기',
@@ -441,7 +460,9 @@ const I18N = {
     'drop.title': 'Drop images here.',
     'drop.sub': 'PNG · JPG · WEBP, as many as you like',
     'drop.btn': 'Choose Images',
-    'drop.kbd': 'or paste with ⌘V',
+    'drop.kbd': 'or paste with {key}', 'drop.veil': 'Drop to add',
+    'upd.msg': 'A new version is ready.', 'upd.btn': 'Reload',
+    't.unreadable': 'Skipped {n} file(s) that couldn’t be opened (use PNG, JPG or WEBP)',
     'res.title': 'Results',
     'res.clear': 'Clear All',
     'res.zip': 'Download All as ZIP',
@@ -486,7 +507,8 @@ let lang = (() => {
   try { const s = localStorage.getItem('lang'); if (s in I18N) return s; } catch {}
   return /^ko\b/i.test(navigator.language || '') ? 'ko' : 'en';
 })();
-const t = (k, v = {}) => (I18N[lang][k] ?? I18N.ko[k] ?? k).replace(/\{(\w+)\}/g, (_, n) => v[n]);
+const PASTE_KEY = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘V' : 'Ctrl+V';
+const t = (k, v = {}) => (I18N[lang][k] ?? I18N.ko[k] ?? k).replace(/\{(\w+)\}/g, (_, n) => ({ key: PASTE_KEY, ...v })[n]);
 function applyI18n(root = document) {
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
   for (const el of root.querySelectorAll('[data-i18n-html]')) el.innerHTML = t(el.dataset.i18nHtml);
@@ -533,9 +555,15 @@ function analyze(imageData, at) {
 drop.addEventListener('click', () => fileInput.click());
 drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
 fileInput.addEventListener('change', () => { const files = [...fileInput.files]; fileInput.value = ''; addFiles(files); });
-['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+// Files can be dropped anywhere on the page; without this, dropping outside
+// the drop zone makes the browser open the image and the results are lost.
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+const setDragging = on => { document.body.classList.toggle('dragging', on); drop.classList.toggle('over', on); };
+window.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; setDragging(true); });
+window.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; setDragging(false); } });
+window.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; setDragging(false); addFiles(e.dataTransfer.files); });
 window.addEventListener('paste', e => {
   const files = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith('image/')).map(i => i.getAsFile());
   if (files.length) addFiles(files);
@@ -734,17 +762,19 @@ syncOptions();
 
 async function addFiles(files) {
   await ready;
-  let first = true;
-  for (const f of files) if (f && f.type.startsWith('image/')) {
-    await addOne(f);
+  let first = true, failed = 0;
+  for (const f of files) {
+    if (!f) continue;
+    if (!f.type.startsWith('image/') || !(await addOne(f))) { failed++; continue; }
     if (first) { first = false; $('#toolbar').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
   }
+  if (failed) toast(t('t.unreadable', { n: failed }));
 }
 
 async function addOne(file) {
   const url = URL.createObjectURL(file);
   let img;
-  try { img = await loadImage(url); } catch { URL.revokeObjectURL(url); return; }
+  try { img = await loadImage(url); } catch { URL.revokeObjectURL(url); return false; }
   const W = img.naturalWidth, H = img.naturalHeight;
   const before = document.createElement('canvas'); before.width = W; before.height = H;
   const bctx = before.getContext('2d', { willReadFrequently: true }); bctx.drawImage(img, 0, 0);
@@ -755,7 +785,7 @@ async function addOne(file) {
   card.innerHTML = `
     <div class="card-head"><div class="name"></div><div class="status"></div></div>
     <div class="body">
-      <div class="compare" data-i18n-attr="title:card.compare">
+      <div class="compare" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" data-i18n-attr="title:card.compare;aria-label:card.compare">
         <canvas class="before"></canvas><canvas class="after"></canvas><div class="crop"></div>
         <div class="handle"></div><div class="tag l" data-i18n="card.before"></div><div class="tag r" data-i18n="card.after"></div>
         <canvas class="loupe" width="320" height="320"></canvas>
@@ -831,7 +861,7 @@ async function addOne(file) {
   };
   const apply = ({ det, fit, res }, manual) => {
     it.det = det;
-    it.found = manual ? det.score >= 0.2
+    it.found = manual ? det.score >= 0.2 && res <= 0.35
       : det.score >= (det.prior ? 0.35 : 0.6) && res <= (det.prior ? 0.2 : 0.15);
     if (it.found) {
       it.auto = fit; it.gain = fit.gain; it.L = fit.L;
@@ -864,6 +894,7 @@ async function addOne(file) {
     apply(await analyze(orig, { x: Math.round(fx * W), y: Math.round(fy * H) }), true);
   });
   apply(await analyze(orig), false);
+  return true;
 }
 
 function drawZoom(it, canvas, imgData) {
@@ -886,9 +917,19 @@ function setupCompare(box, it, onPick) {
   let split = 50, mode = null, start = null;
   const set = clientX => {
     const r = box.getBoundingClientRect();
-    split = Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * 100;
-    after.style.clipPath = `inset(0 0 0 ${split}%)`; handle.style.left = split + '%';
+    setSplit((clientX - r.left) / r.width * 100);
   };
+  const setSplit = p => {
+    split = Math.max(0, Math.min(100, p));
+    after.style.clipPath = `inset(0 0 0 ${split}%)`; handle.style.left = split + '%';
+    box.setAttribute('aria-valuenow', String(Math.round(split)));
+  };
+  box.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 20 : 5;
+    const next = { ArrowLeft: split - step, ArrowRight: split + step, Home: 0, End: 100 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault(); setSplit(next);
+  });
   const cropping = () => crop.style.display === 'block';
   const overKnob = e => {
     const r = box.getBoundingClientRect();
@@ -941,8 +982,14 @@ function setupCompare(box, it, onPick) {
 // ---------- start ----------
 for (const b of document.querySelectorAll('#langSwitch button')) b.addEventListener('click', () => setLang(b.dataset.lang, true));
 setLang(lang, false);
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost'))
+// The page is served from the offline cache, so after a release the old
+// version shows once; when the new service worker takes over, offer a reload.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) $('#update').hidden = false; });
   navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+$('#reload').addEventListener('click', () => location.reload());
 </script>
 </body>
 </html>

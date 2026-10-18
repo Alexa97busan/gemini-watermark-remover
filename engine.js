@@ -130,19 +130,34 @@ function searchRegion(imageData, ox, oy, w, h, boxes) {
   return best;
 }
 
-function detect(imageData) {
+// Best match among the known layouts (with a little jitter). `near`, if
+// given as {x, y}, keeps only layouts whose box lies around that point.
+function bestPrior(imageData, near) {
   const { width: W, height: H } = imageData;
   const w = Math.min(W, 600), h = Math.min(H, 600), ox = W - w, oy = H - h;
   const full = makeScorer(field(imageData, ox, oy, w, h, 1));
-
-  // 1) known layouts, with a little jitter
   let prior = { score: -9 };
-  for (const [name, s0, m] of PRIORS) for (let s = s0 - 2; s <= s0 + 2; s++)
-    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
-      const x = W - m - Math.round((s0 + s) / 2) + dx, y = H - m - Math.round((s0 + s) / 2) + dy;
-      const sc = full(name, s, x - ox, y - oy);
-      if (sc > prior.score) prior = { score: sc, name, s, x, y, prior: true };
+  for (const [name, s0, m] of PRIORS) {
+    if (near) {
+      const cx = W - m - s0 / 2, cy = H - m - s0 / 2;
+      if (Math.abs(near.x - cx) > s0 * 0.75 || Math.abs(near.y - cy) > s0 * 0.75) continue;
     }
+    for (let s = s0 - 2; s <= s0 + 2; s++)
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const x = W - m - Math.round((s0 + s) / 2) + dx, y = H - m - Math.round((s0 + s) / 2) + dy;
+        const sc = full(name, s, x - ox, y - oy);
+        if (sc > prior.score) prior = { score: sc, name, s, x, y, prior: true };
+      }
+  }
+  return prior;
+}
+
+function detect(imageData) {
+  const { width: W, height: H } = imageData;
+  const w = Math.min(W, 600), h = Math.min(H, 600), ox = W - w, oy = H - h;
+
+  // 1) known layouts
+  const prior = bestPrior(imageData);
   // An official layout that matches reasonably is far more likely than a
   // look-alike texture elsewhere, so trust it before searching freely.
   if (prior.score >= 0.35) return prior;
@@ -158,9 +173,12 @@ function detect(imageData) {
   return prior.score + 0.15 >= free.score ? prior : free;
 }
 
-// Search near a point the user clicked.
+// Search near a point the user clicked. A known layout around the point is
+// preferred, as in detect(); otherwise any size and position nearby.
 function detectAt(imageData, px, py) {
   const { width: W, height: H } = imageData;
+  const prior = bestPrior(imageData, { x: px, y: py });
+  if (prior.score >= 0.3) return prior;
   const R = 220, ox = Math.max(0, px - R), oy = Math.max(0, py - R);
   const w = Math.min(W, px + R) - ox, h = Math.min(H, py + R) - oy;
   const boxes = [];
