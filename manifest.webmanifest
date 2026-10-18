@@ -1,0 +1,16 @@
+{
+  "name": "Gemini 워터마크 제거",
+  "short_name": "Watermark",
+  "description": "Gemini 이미지의 ✦ 마크를 브라우저에서 지우고 원본 해상도로 저장합니다. Remove the Gemini ✦ mark in your browser.",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbfbfd",
+  "theme_color": "#fbfbfd",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
