@@ -331,7 +331,7 @@
     <li>Gemini는 로고를 반투명하게 합성합니다(결과 = α·로고색 + (1−α)·원본). 로고의 알파맵을 알고 있으므로 이 식을 거꾸로 풀어 원래 픽셀을 복원합니다.</li>
     <li>자국이 살짝 남으면 결과 카드의 <b>세부 조정</b>에서 강도와 로고 밝기를 바꿔 보세요. 엉뚱한 곳을 잡았다면 <b>위치 직접 지정</b>을 누른 뒤 이미지에서 마크를 클릭하세요.</li>
     <li>휴대폰에서는 <b>공유·저장</b>을 누르면 공유 시트가 열려 사진 앱에 바로 저장할 수 있어요. <b>복사</b>는 결과를 PNG로 클립보드에 넣어 메신저나 문서에 붙여넣을 수 있게 합니다.</li>
-    <li>저장 설정에서 형식(PNG·JPG·WEBP), 가로 크기, 비율을 고르면 모든 다운로드에 적용됩니다. 비율을 고르면 미리보기에 잘릴 영역이 어둡게 표시되고, 밝은 상자를 끌어 남길 위치를 옮길 수 있어요. 원본보다 크게 늘리지는 않습니다.</li>
+    <li>저장 설정에서 형식(PNG·JPG·WEBP), 가로 크기, 비율을 고르면 모든 다운로드에 적용됩니다. 비율을 고르면 미리보기에 잘릴 영역이 어둡게 표시되고, 사진을 끌어 남길 위치를 옮길 수 있어요. 이때 비교선은 가운데 동그란 손잡이를 잡아 움직입니다. 원본보다 크게 늘리지는 않습니다.</li>
     <li>눈에 보이는 마크만 지웁니다. 이미지 안에 숨겨진 SynthID 디지털 워터마크는 그대로 남습니다. 본인이 만든 이미지를 깔끔하게 쓰는 용도로 사용해 주세요.</li>
   </ol>
   <div class="fine">알파맵 데이터: <a href="https://github.com/GargantuaX/gemini-watermark-remover" target="_blank" rel="noopener">GargantuaX/gemini-watermark-remover</a> (MIT License, © 2025 Jad)</div>
@@ -632,7 +632,7 @@ function outputSize(it) {
 function refreshOutput(it) {
   const { c, w, h } = outputSize(it);
   const cropped = c.w !== it.W || c.h !== it.H;
-  $('.meta', it.card).textContent = `${FORMATS[opts.fmt][1]} · ${w}×${h}` + (cropped ? ' · 상자를 끌어 위치 조정' : '');
+  $('.meta', it.card).textContent = `${FORMATS[opts.fmt][1]} · ${w}×${h}` + (cropped ? ' · 사진을 끌어 위치 조정' : '');
   const box = $('.crop', it.card);
   box.style.display = cropped ? 'block' : 'none';
   if (cropped) Object.assign(box.style, { left: c.x / it.W * 100 + '%', top: c.y / it.H * 100 + '%',
@@ -922,9 +922,9 @@ function drawZoom(it, canvas, imgData) {
   canvas.getContext('2d').putImageData(crop, 0, 0);
 }
 
-// Dragging the image moves the comparison divider. When a crop ratio is on,
-// dragging inside the crop box moves the box instead (the divider knob still
-// slides).
+// Without a crop ratio, dragging anywhere on the image moves the comparison
+// divider. With a crop ratio, dragging anywhere moves the crop box, and the
+// divider moves only when its round knob is grabbed.
 function setupCompare(box, it, onPick) {
   const after = $('.after', box), handle = $('.handle', box), crop = $('.crop', box);
   let split = 50, mode = null, start = null;
@@ -933,16 +933,15 @@ function setupCompare(box, it, onPick) {
     split = Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * 100;
     after.style.clipPath = `inset(0 0 0 ${split}%)`; handle.style.left = split + '%';
   };
-  const overCrop = e => {
-    if (crop.style.display !== 'block') return false;
-    const r = box.getBoundingClientRect(), c = crop.getBoundingClientRect();
-    if (Math.abs(e.clientX - (r.left + r.width * split / 100)) < 24) return false;
-    return e.clientX >= c.left && e.clientX <= c.right && e.clientY >= c.top && e.clientY <= c.bottom;
+  const cropping = () => crop.style.display === 'block';
+  const overKnob = e => {
+    const r = box.getBoundingClientRect();
+    return Math.hypot(e.clientX - (r.left + r.width * split / 100), e.clientY - (r.top + r.height / 2)) <= 24;
   };
   box.addEventListener('pointerdown', e => {
     if (it.picking) { const r = $('canvas.before', box).getBoundingClientRect(); onPick((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); return; }
     box.setPointerCapture(e.pointerId);
-    if (overCrop(e)) { mode = 'crop'; start = { x: e.clientX, y: e.clientY, ...(it.cropPos) }; return; }
+    if (cropping() && !overKnob(e)) { mode = 'crop'; start = { x: e.clientX, y: e.clientY, ...(it.cropPos) }; box.style.cursor = 'grabbing'; return; }
     mode = 'split'; set(e.clientX);
   });
   box.addEventListener('pointermove', e => {
@@ -953,9 +952,9 @@ function setupCompare(box, it, onPick) {
       it.cropPos = { fx: (c.x + c.w / 2) / it.W, fy: (c.y + c.h / 2) / it.H };
       return refreshOutput(it);
     }
-    if (!it.picking) box.style.cursor = overCrop(e) ? 'move' : '';
+    if (!it.picking) box.style.cursor = cropping() && !overKnob(e) ? 'grab' : '';
   });
-  const end = () => { mode = null; };
+  const end = () => { mode = null; box.style.cursor = ''; };
   box.addEventListener('pointerup', end);
   box.addEventListener('pointercancel', end);
 }
