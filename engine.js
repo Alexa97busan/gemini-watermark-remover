@@ -86,11 +86,16 @@ function integral(v, w, h) {
 
 // Match score = NCC(luminance, alpha) + NCC(edges, alpha edges). The first
 // catches a bright logo; the second also catches grey logos on mixed backgrounds.
-function makeScorer({ g, e, w, h }) {
+// `noise` (in luminance levels) is added to the patch variance so that on a
+// nearly flat background a 1–2 level ripple does not count as a strong match;
+// it is used when judging what is left after removal, together with `absolute`
+// so that a dark leftover (too much removed) counts like a bright one.
+function makeScorer({ g, e, w, h }, noise = 0, absolute = false) {
+  const floor = noise * noise;
   const G = integral(g, w, h), E = integral(e, w, h);
   const rect = (A, x, y, s) => A[(y+s)*(w+1)+x+s] - A[y*(w+1)+x+s] - A[(y+s)*(w+1)+x] + A[y*(w+1)+x];
   const ncc = (v, S, tz, tn, x, y, s) => {
-    const n = s * s, sum = rect(S.I, x, y, s), vr = rect(S.I2, x, y, s) - sum * sum / n;
+    const n = s * s, sum = rect(S.I, x, y, s), vr = rect(S.I2, x, y, s) - sum * sum / n + n * floor;
     if (vr < 1e-3) return 0;
     let c = 0;
     for (let j = 0; j < s; j++) { const row = (y + j) * w + x, tr = j * s;
@@ -100,7 +105,8 @@ function makeScorer({ g, e, w, h }) {
   return (name, s, x, y) => {
     if (x < 0 || y < 0 || x + s > w || y + s > h || s < 8) return -9;
     const t = getMap(name, s);
-    return ncc(g, G, t.z, t.znorm, x, y, s) + ncc(e, E, t.e, t.enorm, x, y, s);
+    const lum = ncc(g, G, t.z, t.znorm, x, y, s);
+    return (absolute ? Math.abs(lum) : lum) + ncc(e, E, t.e, t.enorm, x, y, s);
   };
 }
 
@@ -203,6 +209,40 @@ function unblend(src, dst, W, det, gain, L) {
       dst[i+ch] = v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
     }
   }
+  matchFlatSurroundings(src, dst, W, det, gain);
+}
+
+// Compression after the mark was added flattens the faint colour left under
+// it, so on a plain background the restored spot can come out a shade greyer
+// than its surroundings. When the ring around the box is nearly uniform, shift
+// the restored pixels towards the ring's average colour (in proportion to how
+// strongly the mark covered them). Textured backgrounds are left alone.
+function matchFlatSurroundings(src, dst, W, det, gain) {
+  const t = getMap(det.name, det.s), s = det.s, H = src.length / 4 / W, pad = 6;
+  const ring = [0, 0, 0], inner = [0, 0, 0];
+  let nr = 0, ni = 0, sumL = 0, sumL2 = 0;
+  for (let y = det.y - pad; y < det.y + s + pad; y++) for (let x = det.x - pad; x < det.x + s + pad; x++) {
+    if (x < 0 || y < 0 || x >= W || y >= H) continue;
+    const j = y - det.y, k = x - det.x, i = (y * W + x) * 4;
+    if (j < -1 || k < -1 || j > s || k > s) {
+      const l = 0.299 * src[i] + 0.587 * src[i+1] + 0.114 * src[i+2];
+      sumL += l; sumL2 += l * l; nr++;
+      for (let ch = 0; ch < 3; ch++) ring[ch] += src[i+ch];
+    } else if (j >= 0 && k >= 0 && j < s && k < s && t.a[j*s+k] * gain > 0.3) {
+      ni++; for (let ch = 0; ch < 3; ch++) inner[ch] += dst[i+ch];
+    }
+  }
+  if (nr < 50 || ni < 20) return;
+  const sd = Math.sqrt(Math.max(0, sumL2 / nr - (sumL / nr) ** 2));
+  if (sd > 10) return;
+  const shift = ring.map((v, ch) => v / nr - inner[ch] / ni);
+  const amax = Math.max(1e-6, Math.min(0.99, Math.max(...t.a) * gain));
+  for (let j = 0; j < s; j++) for (let k = 0; k < s; k++) {
+    const w = Math.min(1, t.a[j*s+k] * gain / amax);
+    if (w < 0.02) continue;
+    const i = ((det.y + j) * W + det.x + k) * 4;
+    for (let ch = 0; ch < 3; ch++) dst[i+ch] = Math.max(0, Math.min(255, Math.round(dst[i+ch] + shift[ch] * w)));
+  }
 }
 
 // Choose gain and logo brightness so the restored patch no longer resembles
@@ -221,10 +261,12 @@ function fitParams(imageData, det) {
   }
   const az = zeroMean(A, 'z'), ae = zeroMean(edges(A, n, n), 'e');
   const out = new Float32Array(n * n);
+  // same noise floor as residualScore, so flat backgrounds do not mislead the fit
   const corr = (v, tz, tn) => {
     let m = 0; for (let i = 0; i < v.length; i++) m += v[i]; m /= v.length;
-    let c = 0, q = 0; for (let i = 0; i < v.length; i++) { const d = v[i] - m; c += d * tz[i]; q += d * d; }
-    return q < 1e-6 ? 0 : c / (Math.sqrt(q) * tn);
+    let c = 0, q = v.length * RESIDUAL_NOISE * RESIDUAL_NOISE;
+    for (let i = 0; i < v.length; i++) { const d = v[i] - m; c += d * tz[i]; q += d * d; }
+    return c / (Math.sqrt(q) * tn);
   };
   const cost = (gain, L) => {
     for (let i = 0; i < out.length; i++) {
@@ -248,8 +290,9 @@ function fitParams(imageData, det) {
 }
 
 
-// How much the logo still shows after removal (same score as detection).
-// A real watermark drops to near zero; a look-alike texture does not.
+// How much the logo still shows after removal (the detection score, with a
+// noise floor). A real watermark drops to near zero; a look-alike texture does not.
+const RESIDUAL_NOISE = 4;
 function residualScore(imageData, det, gain, L) {
   const { width: W, height: H } = imageData, p = 4;
   const ox = Math.max(0, det.x - p), oy = Math.max(0, det.y - p);
@@ -258,7 +301,7 @@ function residualScore(imageData, det, gain, L) {
   for (let j = 0; j < h; j++) patch.data.set(imageData.data.subarray(((oy + j) * W + ox) * 4, ((oy + j) * W + ox + w) * 4), j * w * 4);
   const local = { ...det, x: det.x - ox, y: det.y - oy };
   unblend(new Uint8ClampedArray(patch.data), patch.data, w, local, gain, L);
-  return makeScorer(field(patch, 0, 0, w, h, 1))(det.name, det.s, local.x, local.y);
+  return makeScorer(field(patch, 0, 0, w, h, 1), RESIDUAL_NOISE, true)(det.name, det.s, local.x, local.y);
 }
 
 // Full analysis for one image: find the mark (automatically, or near the

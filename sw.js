@@ -1,7 +1,7 @@
 // Offline support: keep the app's files cached and serve them first, while
 // refreshing the cache in the background so the next visit gets updates.
 // Bump VERSION when releasing so old caches are dropped.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'watermark-remover-' + VERSION;
 const FILES = [
   './', './index.html', './engine.js', './worker.js', './manifest.webmanifest',

@@ -861,7 +861,10 @@ async function addOne(file) {
   };
   const apply = ({ det, fit, res }, manual) => {
     it.det = det;
-    it.found = manual ? det.score >= 0.2 && res <= 0.35
+    // A near-perfect match at a known layout is decisive on its own; otherwise
+    // the mark must also mostly disappear after removal (rules out look-alikes).
+    it.found = det.prior && det.score >= 1 ? true
+      : manual ? det.score >= 0.2 && res <= 0.35
       : det.score >= (det.prior ? 0.35 : 0.6) && res <= (det.prior ? 0.2 : 0.15);
     if (it.found) {
       it.auto = fit; it.gain = fit.gain; it.L = fit.L;
